@@ -169,6 +169,75 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 .node-label { font-size: 15px; fill: var(--muted); }
 .node-count { font-size: 11px; fill: #77551f; }
 .graph-annotation { fill: #6b5787; }
+.node-refinement { fill: none; stroke-width: 4; stroke-linecap: round; }
+.node-refinement circle { opacity: .23; }
+.node-refinement .complete { opacity: 1; }
+.node-refinement .current { animation: refinement-fill .3s .55s both; }
+.node-ripple { animation: ripple .85s .55s both; }
+.graph-node.readout-ready .node-ring { stroke-width: 2.5; opacity: .8; }
+@keyframes refinement-fill {
+  from { opacity: .23; }
+  to { opacity: 1; }
+}
+
+.graph-edge.context-edge { opacity: .36; }
+.paired-refinement { pointer-events: none; }
+.refinement-route { fill: none; stroke-width: 2; opacity: .46; }
+.report-route { stroke: var(--text); }
+.visual-route { stroke: var(--visual); }
+.query-route { stroke: #4277ac; stroke-dasharray: 3 4; }
+.memory-frame { fill: #f7fbff; stroke: #adc8df; stroke-width: 1.4; }
+.image-patch { fill: #e1eef9; stroke: #b8cfe4; stroke-width: 1; }
+.selected-patch { fill: #8cbfe7; stroke: #4b85b5; }
+.refinement-light {
+  transform-box: fill-box;
+  offset-anchor: center;
+  offset-rotate: 0deg;
+  opacity: 0;
+  stroke: #fff;
+  stroke-width: 1.8;
+}
+.evidence-light { animation: refinement-travel .83s .12s both; }
+.report-light { fill: #1c8f7f; }
+.visual-light { fill: #4287c0; }
+.query-light { fill: #386f9f; animation: refinement-travel .62s 1.08s both; }
+.retrieve-light { fill: #4ea7d8; animation: refinement-travel .67s 1.94s both; }
+.refinement-merge {
+  fill: #80cacf;
+  opacity: 0;
+  animation: refinement-merge .46s .81s both;
+}
+.paired-refinement.is-replaying .query-route { animation: refinement-route-in .3s 1.05s both; }
+.paired-refinement.is-replaying .selected-patch { animation: refinement-retrieve .5s 1.62s both; }
+.paired-refinement-target .node-surface { fill: #c8e7fa; stroke: #316b9b; stroke-width: 2.5; }
+.paired-refinement-target.is-replaying .node-surface { animation: refinement-update .62s 2.58s both; }
+.paired-refinement-target.is-replaying .node-ripple,
+.paired-refinement-target.is-replaying .node-refinement .current { animation-delay: 2.58s; }
+
+@keyframes refinement-travel {
+  from { offset-distance: 0%; opacity: 0; }
+  12%, 89% { opacity: 1; }
+  to { offset-distance: 100%; opacity: 0; }
+}
+@keyframes refinement-merge {
+  0%, 100% { opacity: 0; }
+  37% { opacity: .72; }
+}
+@keyframes refinement-route-in {
+  from { opacity: .06; }
+  to { opacity: .46; }
+}
+@keyframes refinement-retrieve {
+  from { fill: #e1eef9; stroke: #b8cfe4; }
+  56% { fill: #4f9ed2; stroke: #397eaf; }
+  to { fill: #8cbfe7; stroke: #4b85b5; }
+}
+@keyframes refinement-update {
+  from { fill: #edf4fa; stroke: #4b85b5; stroke-width: 1.3; }
+  48% { fill: #99cee9; stroke: #316b9b; stroke-width: 3.6; }
+  to { fill: #c8e7fa; stroke: #316b9b; stroke-width: 2.5; }
+}
+
 .step-track button { font-size: 11px; color: var(--muted); }
 .play-button, .quiet-button { font-size: 12px; }
 .report-content .excerpt { font-size: 13px; }
@@ -315,9 +384,12 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
     ['Round 5 · readout', 'Bring available evidence together at f.', 'The final routing weights combine the available expert states at the diagnostic readout.']
   ];
   let timer = null, toastTimer = null, pendingFiles = [];
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   const current = () => cases[state.caseIndex].data;
   const result = () => getResult(current(), state.mode);
   const intervention = () => result()?.interventions?.find(i => i.id === state.intervention);
+  const roundTrace = () => intervention() ? null : result()?.trace?.find(t => t.round === state.step);
+  const pairedRefinement = () => state.mode === 'paired' && state.step >= 2 && state.step <= 4 && !roundTrace();
   function populateCases() {
     $('case-select').innerHTML = cases.map((c, i) => `<option value="${i}">${esc(c.data.title)}</option>`).join('');
     $('case-select').value = String(state.caseIndex);
@@ -341,38 +413,88 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
     const matching = trace.edges.filter(e => (e.from === from || (from === 'k' && /^k\d+$/.test(e.from))) && e.to === to);
     return matching.length ? matching.reduce((n, e) => n + e.weight, 0) : null;
   }
-  function drawGraph() {
+  function pairedRefinementMarkup(animate) {
+    const report = routePath('t2', 'v2');
+    const visual = routePath('v1', 'v2');
+    const query = 'M332 233 Q356 245 384 245 L415 245';
+    const retrieve = 'M415 245 L384 245 Q349 251 321 231 L300 220';
+    const patches = Array.from({ length: 8 }, (_, i) => {
+      const x = 383 + (i % 4) * 17;
+      const y = 231 + Math.floor(i / 4) * 15;
+      const selected = i === 1 || i === 6;
+      return `<rect class="image-patch ${selected ? 'selected-patch' : ''}" x="${x}" y="${y}" width="12" height="12" rx="2"/>`;
+    }).join('');
+    const light = (kind, path) => `<circle class="refinement-light ${kind}" r="6" style="offset-path:path('${path}')"/>`;
+    return `<g class="paired-refinement ${animate ? 'is-replaying' : ''}" aria-hidden="true">
+      <path class="refinement-route report-route" d="${report}"/>
+      <path class="refinement-route visual-route" d="${visual}"/>
+      <path class="refinement-route query-route" d="${query}"/>
+      <g class="refinement-token-bank">
+        <rect class="memory-frame" x="376" y="224" width="76" height="40" rx="7"/>
+        ${patches}
+      </g>
+      ${animate ? light('evidence-light report-light', report + 'L300 220')
+        + light('evidence-light visual-light', visual + 'L300 220')
+        + '<circle class="refinement-merge" cx="300" cy="220" r="15"/>'
+        + light('query-light', query) + light('retrieve-light', retrieve) : ''}
+    </g>`;
+  }
+  function drawGraph(animateStep = false) {
     const graph = getGraph(state.mode), byId = Object.fromEntries(graph.nodes.map(n => [n.id, n]));
-    const trace = result()?.trace?.find(t => t.round === state.step);
+    const traces = result()?.trace;
+    const displayedTrace = roundTrace();
+    const showPaired = pairedRefinement();
+    const animatePaired = showPaired && (animateStep || timer) && !reducedMotion.matches;
     const item = intervention();
     const blocked = (from, to) => to === 'f' && ((item?.kind === 'block-visual' && from.startsWith('v')) || (item?.kind === 'block-text' && ['t1', 't2', 'k'].includes(from)));
-    // Original traces cannot be reused as measured trajectories after an intervention.
-    const displayedTrace = item ? null : trace;
-    const maxWeight = displayedTrace ? Math.max(.000001, ...displayedTrace.edges.map(e => e.weight)) : 1;
+    const maxWeight = displayedTrace ? Math.max(.000001, ...traces.flatMap(round =>
+      EDGES.map(([from, to]) => traceWeight(round, from, to) ?? 0)
+    )) : 1;
     let markup = '<title id="graph-title">Available experts and permitted evidence paths in RippleMoE</title><defs><marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L8 4L0 8" fill="#a7bfc0"/></marker><marker id="active-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L8 4L0 8" fill="#4b9d91"/></marker></defs>';
     EDGES.forEach(([from, to]) => {
       const on = byId[from].available && byId[to].available;
       const block = on && blocked(from, to);
       const weight = traceWeight(displayedTrace, from, to);
-      const active = on && !block && state.step > 0 && (state.step === 5 ? to === 'f' : to !== 'f') && (!displayedTrace || (weight !== null && weight > 0));
+      const context = showPaired && !(to === 'v2' && (from === 't2' || from === 'v1'));
+      const active = on && !block && !context && state.step > 0 && (state.step === 5 ? to === 'f' : to !== 'f') && (!displayedTrace || (weight !== null && weight > 0));
       const width = weight === null ? 1.3 : 1 + Math.min(weight / maxWeight, 1) * 3;
       const description = !on ? 'Unavailable modality: edge masked' : block ? 'Direct-readout edge blocked in this intervention' : weight !== null ? `Recorded weight ${weight.toFixed(4)}${from === 'k' ? ' (sum of keyword edges)' : ''}` : 'Permitted evidence direction; no recorded weight for this round';
       const path = routePath(from, to);
-      markup += `<path d="${path}" class="graph-edge ${!on ? 'muted' : ''} ${block ? 'blocked' : ''}" style="stroke-width:${width};${active ? 'stroke:#72a798' : ''}" marker-end="url(#${active ? 'active-arrow' : 'arrow'})"><title>${esc(from + ' → ' + to + '：' + description)}</title></path>`;
-      if (active && timer && (weight === null || weight > 0)) markup += `<path d="${path}" class="flow-particle"/>`;
+      markup += `<path d="${path}" class="graph-edge ${!on ? 'muted' : ''} ${block ? 'blocked' : ''} ${context ? 'context-edge' : ''}" style="stroke-width:${width};${active ? 'stroke:#72a798' : ''}" marker-end="url(#${active ? 'active-arrow' : 'arrow'})"><title>${esc(from + ' → ' + to + '：' + description)}</title></path>`;
+      if (active && timer && !showPaired) markup += `<path d="${path}" class="flow-particle"/>`;
     });
     markup += '<path d="M490 314Q477 285 433 264" class="controller-link"/><text x="493" y="294" class="graph-annotation">Edge modulation</text>';
+    const refinementRound = Math.min(state.step, 4);
     graph.nodes.forEach(n => {
       const [color, fill] = colors[n.kind], selected = n.id === state.node, isReadout = n.id === 'f';
-      const updated = n.available && state.step > 0 && (state.step === 5 ? isReadout : graph.edges.some(e => e.to === n.id && e.to !== 'f'));
+      const readoutReady = isReadout && state.step === 5;
+      const refining = !isReadout && graph.edges.some(edge => edge.to === n.id);
+      const showProgress = refining && refinementRound > 0;
+      const pairedTarget = showPaired && n.id === 'v2';
+      const animateUpdate = showPaired ? pairedTarget && animatePaired : timer && refining && state.step > 0 && state.step < 5;
       const radius = isReadout ? 33 : 26;
-      markup += `<g class="graph-node ${!n.available ? 'inactive' : ''} ${selected ? 'selected' : ''}" transform="translate(${n.x} ${n.y})" tabindex="0" role="button" data-node="${n.id}" aria-label="${esc(n.name + (n.available ? ', available' : ', masked: missing modality'))}" aria-pressed="${selected}"><title>${esc(n.name)}</title><circle class="node-ring" r="${radius + 7}" stroke="${color}"/>${timer && updated ? `<circle class="node-ripple" r="${radius + 9}" stroke="${color}"/>` : ''}<circle class="node-surface" r="${radius}" fill="${fill}" stroke="${color}"/><text y="8" class="node-code" fill="${isReadout ? '#fff' : color}">${n.label}</text>${n.id === 'k' ? '<rect x="15" y="-35" width="34" height="17" rx="7" fill="#fff8ec" stroke="#e5d5b5"/><text x="32" y="-23" class="node-count">×18</text>' : ''}<text class="node-label" y="${radius + 26}">${esc(n.id === 'k' ? 'Keyword roots' : n.id === 'u' ? 'Controller' : n.id === 'f' ? 'Readout' : n.name)}</text></g>`;
+      const accessibleLabel = n.name + (n.available ? ', available' : ', masked: missing modality')
+        + (showProgress ? `, refinement ${refinementRound} of 4` : '');
+      markup += `<g class="graph-node ${!n.available ? 'inactive' : ''} ${selected ? 'selected' : ''} ${readoutReady ? 'readout-ready' : ''} ${pairedTarget ? 'paired-refinement-target' : ''} ${pairedTarget && animatePaired ? 'is-replaying' : ''}" transform="translate(${n.x} ${n.y})" tabindex="0" role="button" data-node="${n.id}" aria-label="${esc(accessibleLabel)}" aria-pressed="${selected}"><title>${esc(accessibleLabel)}</title>
+        <circle class="node-ring" r="${radius + 7}" stroke="${color}"/>`;
+      if (showProgress) {
+        const segments = Array.from({ length: 4 }, (_, index) => {
+          const complete = index < refinementRound;
+          const current = animateUpdate && index === refinementRound - 1;
+          return `<circle class="${complete ? 'complete' : ''} ${current ? 'current' : ''}" r="${radius + 10}" pathLength="100" stroke-dasharray="18 82" stroke-dashoffset="${-3.5 - index * 25}"/>`;
+        }).join('');
+        markup += `<g class="node-refinement" stroke="${color}" transform="rotate(-90)" aria-hidden="true">${segments}</g>`;
+      }
+      if (animateUpdate) markup += `<circle class="node-ripple" r="${radius + 9}" stroke="${color}"/>`;
+      markup += `<circle class="node-surface" r="${radius}" fill="${isReadout && !readoutReady ? '#e8f2ef' : fill}" stroke="${color}"/>
+        <text y="8" class="node-code" fill="${readoutReady ? '#fff' : color}">${n.label}</text>${n.id === 'k' ? '<rect x="15" y="-35" width="34" height="17" rx="7" fill="#fff8ec" stroke="#e5d5b5"/><text x="32" y="-23" class="node-count">×18</text>' : ''}<text class="node-label" y="${radius + 26}">${esc(n.id === 'k' ? 'Keyword roots' : n.id === 'u' ? 'Controller' : n.id === 'f' ? 'Readout' : n.name)}</text></g>`;
     });
+    if (showPaired) markup += pairedRefinementMarkup(animatePaired);
     const focused = document.activeElement?.dataset?.node;
     $('routing-graph').innerHTML = markup;
     if (focused) $('routing-graph').querySelector(`[data-node="${focused}"]`)?.focus({ preventScroll: true });
     $('trace-badge').textContent = displayedTrace ? `Recorded · R${state.step}` : 'Schematic flow';
-    $('trace-note').textContent = displayedTrace ? 'Edge widths use recorded weights; grouped keyword weights are the sum of recorded direct edges.' : item && result()?.trace?.length ? 'Intervention predictions are recorded. No post-intervention routing trace was supplied; playback remains schematic.' : 'Playback illustrates the prescribed flow for the selected inputs.';
+    $('trace-note').textContent = displayedTrace ? 'Recorded edge weights share one scale across rounds. The keyword edge sums the individual weights.' : item && result()?.trace?.length ? 'Intervention predictions are recorded. No post-intervention routing trace was supplied; playback remains schematic.' : 'Playback illustrates the prescribed flow for the selected inputs.';
   }
   function drawInspector() {
     const node = getGraph(state.mode).nodes.find(n => n.id === state.node), [color, fill] = colors[node.kind];
@@ -383,7 +505,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
     $('node-description').textContent = node.available ? node.description : 'This modality is unavailable. Its expert states and incident edges are masked to zero; prediction uses the remaining subgraph.';
     $('keyword-roots').hidden = node.id !== 'k';
     $('keyword-roots').innerHTML = node.id === 'k' ? Array.from({ length: 18 }, (_, i) => `<span>K${i + 1}</span>`).join('') : '';
-    const trace = !intervention() && result()?.trace?.find(t => t.round === state.step);
+    const trace = roundTrace();
     const gate = trace?.gates?.[node.id];
     const weights = trace?.edges?.filter(e => e.to === node.id) || [];
     const details = [];
@@ -441,7 +563,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
     $('source-note').textContent = data.source || '';
     $('source-note').parentElement.hidden = !data.source;
   }
-  function render() {
+  function render(animateStep = false) {
     const data = current();
     const { imported, reference } = cases[state.caseIndex];
     const inputMode = labels[state.mode];
@@ -450,19 +572,28 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
     $('case-source-badge').textContent = reference ? 'Open-access case' : imported ? 'Imported case' : 'Paper case';
     $('workspace').querySelectorAll('[data-mode]').forEach(b => { const on = b.dataset.mode === state.mode; b.classList.toggle('active', on); b.setAttribute('aria-pressed', String(on)); });
     $('stage-kicker').textContent = stages[state.step][0];
-    $('round-indicator').textContent = state.step === 0 ? '5 routing rounds · 4 refinements' : state.step === 5 ? 'R5 · final readout' : 'R' + state.step + ' · state refinement';
+    $('round-indicator').textContent = state.step === 0 ? '5 routing rounds · 4 refinements' : state.step === 5 ? 'R5 · final readout' : `R${state.step} · refinement ${state.step}/4`;
     $('stage-number').textContent = String(state.step + 1).padStart(2, '0');
     $('stage-title').textContent = stages[state.step][1];
     $('stage-description').textContent = state.step === 0 && state.mode === 'image' ? 'Encode the radiograph once. Two visual experts extract initial states from shared image memory. Text experts and all eighteen keyword roots are masked.' : state.step === 0 && state.mode === 'text' ? 'Encode the report once. Two text experts and eighteen keyword queries read the same report memory. Visual experts and their incident edges are masked.' : stages[state.step][2];
     $('step-track').innerHTML = ['Extract', 'R1', 'R2', 'R3', 'R4', 'Readout'].map((label, i) => `<button data-step="${i}" class="${i === state.step ? 'active' : i < state.step ? 'done' : ''}" aria-label="${esc(stages[i][0])}" ${i === state.step ? 'aria-current="step"' : ''}>${label}</button>`).join('');
-    updatePlayback(); drawInputs(); drawGraph(); drawInspector(); drawResults();
+    updatePlayback(); drawInputs(); drawGraph(animateStep); drawInspector(); drawResults();
   }
   function updatePlayback() {
     $('play-label').textContent = timer ? 'Pause' : 'Play flow';
     $('play-icon').textContent = timer ? 'Ⅱ' : '▶';
     $('play-button').setAttribute('aria-label', timer ? 'Pause the inference flow' : 'Play the inference flow');
   }
-  function pause() { clearInterval(timer); timer = null; updatePlayback(); }
+  function pause() { clearTimeout(timer); timer = null; updatePlayback(); }
+  function scheduleNextRound() {
+    const delay = pairedRefinement() && !reducedMotion.matches ? 3450 : 1750;
+    timer = setTimeout(() => {
+      state.step += 1;
+      if (state.step === 5) pause();
+      else scheduleNextRound();
+      render();
+    }, delay);
+  }
   function toast(message) { clearTimeout(toastTimer); $('toast').textContent = message; $('toast').classList.add('visible'); toastTimer = setTimeout(() => $('toast').classList.remove('visible'), 3600); }
   function chooseIntervention(id) { pause(); state.intervention = state.intervention === id ? '' : id; render(); }
   function download(content, type, filename) {
@@ -527,12 +658,21 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   $('play-button').addEventListener('click', () => {
     if (timer) { pause(); drawGraph(); return; }
     if (state.step === 5) state.step = 0;
-    timer = setInterval(() => { state.step = Math.min(5, state.step + 1); if (state.step === 5) pause(); render(); }, 1750);
+    scheduleNextRound();
     render();
   });
   $('reset-button').addEventListener('click', () => { pause(); state.step = 0; render(); });
-  $('step-track').addEventListener('click', e => { const b = e.target.closest('[data-step]'); if (b) { pause(); state.step = Number(b.dataset.step); render(); } });
-  function selectNode(e) { const n = e.target.closest('[data-node]'); if (n) { state.node = n.dataset.node; drawGraph(); drawInspector(); } }
+  $('step-track').addEventListener('click', e => { const b = e.target.closest('[data-step]'); if (b) { pause(); state.step = Number(b.dataset.step); render(true); } });
+  function selectNode(e) {
+    const node = e.target.closest('[data-node]');
+    if (!node) return;
+    state.node = node.dataset.node;
+    $('routing-graph').querySelectorAll('[data-node]').forEach(candidate => {
+      candidate.classList.toggle('selected', candidate === node);
+      candidate.setAttribute('aria-pressed', String(candidate === node));
+    });
+    drawInspector();
+  }
   $('routing-graph').addEventListener('click', selectNode);
   $('routing-graph').addEventListener('keydown', e => { if (['Enter', ' '].includes(e.key)) { e.preventDefault(); selectNode(e); } });
   for (const id of ['interventions', 'region-overlays', 'report-content']) $(id).addEventListener('click', e => { const b = e.target.closest('[data-intervention]'); if (b) chooseIntervention(b.dataset.intervention); });
